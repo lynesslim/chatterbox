@@ -1,38 +1,45 @@
-from chatterbox.tts import ChatterboxTTS
-import torchaudio as ta
 import os
+import sys
 import uuid
 import base64
+import torchaudio as ta
+from chatterbox.tts import ChatterboxTTS
 
-# Load the model only once when the container starts
+# Include src in path if needed
+sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+
+# Load the model once per container
 model = ChatterboxTTS.from_pretrained(device="cuda")
 
 def handler(event):
-    text = event["input"].get("text")
-    reference_audio = event["input"].get("reference_audio")  # optional
+    input_data = event.get("input", {})
+    text = input_data.get("text")
+    voice_mode = input_data.get("voice_mode", "default")
+    reference_audio_b64 = input_data.get("reference_audio")
 
     if not text:
         return {"error": "Missing 'text' in input."}
 
-    # Optional: save reference audio to temp path
-    if reference_audio:
+    # Handle reference audio (if cloning)
+    if voice_mode == "clone" and reference_audio_b64:
         ref_path = f"/tmp/{uuid.uuid4()}.wav"
         with open(ref_path, "wb") as f:
-            f.write(bytes.fromhex(reference_audio))
+            f.write(base64.b64decode(reference_audio_b64))
         wav = model.generate(text, audio_prompt_path=ref_path)
     else:
         wav = model.generate(text)
 
-    # Save output wav
+    # Save output audio
     out_path = f"/tmp/{uuid.uuid4()}.wav"
     ta.save(out_path, wav, model.sr)
 
+    # Read and encode as base64
     with open(out_path, "rb") as f:
         audio_bytes = f.read()
+    audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
 
-    # Return audio as hex string
     return {
         "output": {
-            "audio_hex": audio_bytes.hex()
+            "audio_b64": audio_b64
         }
     }
